@@ -1,11 +1,11 @@
 
-var nCellsX = 50;
-var nCellsY = 50;
-var nParticles = 99;
+var nCellsX =500;
+var nCellsY = 500;
+var nParticles = 15000;
 var editClick = true;
-var input = 0.1;
+var input = 7;
 var step = 0.1;
-var dotsides = 8;
+var dotsides = 5;
 var eShift = [0, 0,   1, 0,   0, 1,  1, 1]  ; // states are 0,1,2,3
 var componentLookUp = [0,1,2,3,1,0,3,2,2,3,0,1,3,2,1,0];
 var lowest_score;
@@ -247,7 +247,7 @@ function main()
     // determine force
     vec2 dr = normalize(uMousePosition - texture(uSamplerPosition, vTextureCoord).rg);
     vec2 force = dr*uForceConstant;
-    new_velocity = 0.99*texture(uSamplerVelocity, vTextureCoord) + vec4(force,0.0,0.0) * uDeltaTime; 
+    new_velocity = texture(uSamplerVelocity, vTextureCoord) + vec4(force,0.0,0.0) * uDeltaTime; 
     //new_velocity =  vec4(force,0.0,0.0) * uDeltaTime;
 
   } `;
@@ -300,7 +300,7 @@ function main()
     void main(void) 
     {
       ivec4 c = texture(uSamplerCell0, vTextureCoord);
-      ivec4 a = texture(uSamplerAction1, vec2((float(c.r)+0.5)*uParticlesInv, 0.5));
+      ivec4 a = texelFetch(uSamplerAction1, ivec2(c.r,0), 0);
       new_c = ivec4(c.r, c.gba + a.rgb); 
     } `;
 
@@ -402,7 +402,7 @@ function main()
 
   const UpdateParticleInCell = `#version 300 es
   precision highp float;
-  uniform sampler2D uSamplerParticelInCell;
+  uniform sampler2D uSamplerParticleInCell;
   uniform highp isampler2D uSamplerExchange;
   uniform int uComponentLookUp[16];
   uniform int  uShiftState;
@@ -410,16 +410,13 @@ function main()
   uniform vec2 uCellSpaceSize;
   uniform vec2 uOffSetLookUp[16];
 
-  
-
-  
   in highp vec2 vTextureCoord;
 
-  out ivec4 new_cell_data;
+  out vec4 new_position;
 
   void main(void) 
   {
-    vec2 particle_position = texture(uSamplerParticleInCell, vTextureCoord);
+    vec4 particle_position = texture(uSamplerParticleInCell, vTextureCoord);
 
 
     ivec2 g2 = ivec2(particle_position.rg * uCellSpaceSize) % 2;
@@ -428,14 +425,40 @@ function main()
 
     ivec4 exchange_data = texture(uSamplerExchange,  particle_position.rg + uExShiftOffSet);
 
-    ivec4 p_component_vector = 1 - ivec4(abs(sign(p_old_component - quad_data)));
-    int p_new_component = dot(vec4(0,1,2,3), p_component_vector);
+    ivec4 p_component_vector = ivec4(1,1,1,1) - abs(sign(ivec4(p_old_component,p_old_component,p_old_component,p_old_component) - exchange_data));
+    int p_new_component = int(dot(vec4(0,1,2,3), vec4(p_component_vector)));
  
     int index = 4*p_old_component + p_new_component;
     
     vec2 p_offset = uOffSetLookUp[index];
-    new_position = particle_position + vec4(p_offset,0.0,0.0);
+    vec4 t_new_position = particle_position + vec4(p_offset,0.0,0.0);
+    new_position =  t_new_position - floor(t_new_position); 
   } `;
+
+  const UpdateVelocityPiC = `#version 300 es
+  precision highp float;
+  uniform sampler2D uSamplerVelocity;
+  uniform sampler2D uSamplerPosition;
+  uniform sampler2D uSamplerParticleInCell;
+  uniform float uForceConstant;
+  uniform float uDeltaTime;
+  
+  in highp vec2 vTextureCoord;
+
+  out vec4 new_velocity;
+
+  void main(void) 
+  {
+    vec4 p = texture(uSamplerPosition, vTextureCoord);
+    vec4 pic = texture(uSamplerParticleInCell, vTextureCoord);
+    vec4 r = pic - p;
+    float force = length(r)*uForceConstant;
+    vec4 dr = normalize(r);
+
+    new_velocity = texture(uSamplerVelocity,vTextureCoord) + force*dr;
+ 
+  } `;
+
 
 
   const ClearAction = `#version 300 es
@@ -461,6 +484,7 @@ function main()
   const program_UpdateParticleInCell = initShaderProgram(gl, vsSource, UpdateParticleInCell);
   const program_ClearAction = initShaderProgram(gl, vsSource, ClearAction);
   const program_UpdateVelocity = initShaderProgram(gl, vsSource, UpdateVelocity);
+  const program_UpdateVelocityPiC = initShaderProgram(gl, vsSource, UpdateVelocityPiC);
   const program_QuadCompress = initShaderProgram(gl, vsSource, QuadCompress);
 
   
@@ -658,7 +682,7 @@ function main()
         projectionMatrix: gl.getUniformLocation(program_UpdateParticleInCell, 'uProjectionMatrix'),
         modelViewMatrix: gl.getUniformLocation(program_UpdateParticleInCell, 'uModelViewMatrix'),
         uflipY: gl.getUniformLocation(program_UpdateParticleInCell,'uflipY'),
-        uSamplerParticelInCell: gl.getUniformLocation(program_UpdateParticleInCell, 'uSamplerParticelInCell'), 
+        uSamplerParticleInCell: gl.getUniformLocation(program_UpdateParticleInCell, 'uSamplerParticleInCell'), 
         uSamplerExchange: gl.getUniformLocation(program_UpdateParticleInCell, 'uSamplerExchange'), 
         uCellSpaceSize: gl.getUniformLocation(program_UpdateParticleInCell, 'uCellSpaceSize'),
         uShiftState: gl.getUniformLocation(program_UpdateParticleInCell, 'uShiftState'), 
@@ -704,6 +728,27 @@ function main()
         uMousePosition: gl.getUniformLocation(program_UpdateVelocity,'uMousePosition'),
         uForceConstant: gl.getUniformLocation(program_UpdateVelocity,'uForceConstant'),
         uDeltaTime: gl.getUniformLocation(program_UpdateVelocity,'uDeltaTime'),
+       },
+  };
+
+  const programInfo_UpdateVelocityPiC = 
+  {
+    program: program_UpdateVelocityPiC,
+      attribLocations: 
+      {
+        vertexAction: gl.getAttribLocation(program_UpdateVelocityPiC, 'aVertexAction'),
+        textureCoord: gl.getAttribLocation(program_UpdateVelocityPiC, 'aTextureCoord'),
+      },
+      uniformLocations: 
+      {
+        projectionMatrix: gl.getUniformLocation(program_UpdateVelocityPiC, 'uProjectionMatrix'),
+        modelViewMatrix: gl.getUniformLocation(program_UpdateVelocityPiC, 'uModelViewMatrix'),
+        uflipY: gl.getUniformLocation(program_UpdateVelocityPiC,'uflipY'),
+        uSamplerPosition: gl.getUniformLocation(program_UpdateVelocityPiC,'uSamplerPosition'),
+        uSamplerVelocity: gl.getUniformLocation(program_UpdateVelocityPiC,'uSamplerVelocity'),
+        uSamplerParticleInCell: gl.getUniformLocation(program_UpdateVelocityPiC,'uSamplerParticleInCell'),
+        uForceConstant: gl.getUniformLocation(program_UpdateVelocityPiC,'uForceConstant'),
+        uDeltaTime: gl.getUniformLocation(program_UpdateVelocityPiC,'uDeltaTime'),
        },
   };
   
@@ -796,7 +841,7 @@ console.log(vel_str);
   for(let ii = 0; ii < 2; ++ii)
   {
     let tex = createAndSetupTexture(gl);
-    initializeParticleTexture(gl, tex, initial_position_data);
+    initializeParticleTexture(gl, tex, initial_pic_data);
     let fbo = gl.createFramebuffer();
     gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
@@ -915,6 +960,8 @@ console.log(vel_str);
   var sNext = 1;
   var cLast = 0;
   var cNext = 1;
+  var picLast = 0;
+  var picNext = 1;
   var eShift_state = 2;
   
    var then = 0;
@@ -927,8 +974,8 @@ console.log(vel_str);
      RunUpdatePosition(gl, programInfo_UpdatePosition, buffers, ptex[pLast], vtex[vLast], ctex[cLast], pfbo[pNext], .001);
      pLast = pNext;
      pNext = (pLast+1) % 2;
-     let pData = new Float32Array(nParticles*4);
-     gl.readPixels(0, 0, nParticles, 1.0, gl.RGBA, gl.FLOAT, pData);
+     //let pData = new Float32Array(nParticles*4);
+     //gl.readPixels(0, 0, nParticles, 1.0, gl.RGBA, gl.FLOAT, pData);
    
 
      RunUpdateAction(gl, programInfo_UpdateAction, buffers, ptex[pLast], ptex[pNext], stex[sLast], sfbo[sNext]);
@@ -939,18 +986,19 @@ console.log(vel_str);
      vLast = vNext;
      vNext = (vLast+1) % 2;
 
+     RunUpdateVelocityPiC(gl, programInfo_UpdateVelocityPiC, buffers, ptex[pLast], vtex[vLast], pictex[picLast], vfbo[vNext], 0.1) 
+     vLast = vNext;
+     vNext = (vLast+1) % 2;
      
 
-/*      let sData = new Int32Array(nParticles*4);
-     gl.readPixels(0, 0, nParticles, 1.0, gl.RGBA_INTEGER, gl.INT, sData); */
 
      RunUpdateCellAction(gl, programInfo_UpdateCellAction, buffers, ctex[cLast], stex[sLast], cfbo[cNext]);
      cLast = cNext;
      cNext = (cLast+1)%2;
 
 
-     let cData = new Int32Array(nCellsX*nCellsY*4);
-     gl.readPixels(0, 0, nCellsX, nCellsY, gl.RGBA_INTEGER, gl.INT, cData);
+     //let cData = new Int32Array(nCellsX*nCellsY*4);
+     //gl.readPixels(0, 0, nCellsX, nCellsY, gl.RGBA_INTEGER, gl.INT, cData);
 
      RunClearAction(gl, programInfo_ClearAction, buffers, sfbo[sLast]);
 
@@ -971,9 +1019,9 @@ console.log(vel_str);
       let eIndex = eShift_state*2;
       RunExchange(gl, programInfo_Exchange, buffers, ctex[cLast], qtex, efbo[0], eShift[eIndex],eShift[eIndex + 1] );
      
-      let eData = new Int32Array(nCellsX*nCellsY);
+    /*   let eData = new Int32Array(nCellsX*nCellsY);
       gl.readPixels(0, 0, nCellsX/2, nCellsY/2, gl.RGBA_INTEGER, gl.INT, eData);
- 
+  */
       //console.log('ExCell 0: '+eData[0]+', '+eData[1]+', '+eData[2]+', '+eData[3]);
       //console.log('ExCell 1: '+eData[4]+', '+eData[5]+', '+eData[6]+', '+eData[7]);
       
@@ -981,18 +1029,25 @@ console.log(vel_str);
       RunUpdateCellState(gl, programInfo_UpdateCellState, buffers, ctex[cLast], etex[0], cfbo[cNext], eShift_state, -eShift[eIndex], -eShift[eIndex + 1]);
       cLast = cNext;
       cNext = (cLast+1)%2;
-      gl.readPixels(0, 0, nCellsX, nCellsY, gl.RGBA_INTEGER, gl.INT, cData);
+      //gl.readPixels(0, 0, nCellsX, nCellsY, gl.RGBA_INTEGER, gl.INT, cData);
 
      //}
-     RunUpdateParticleInCell(gl, programInfo_UpdateParticleInCell, buffers, pictex[0], etex[0], picfbo[1], eShift_state,-eShift[eIndex], -eShift[eIndex + 1]);
+     RunUpdateParticleInCell(gl, programInfo_UpdateParticleInCell, buffers, pictex[picLast], etex[0], picfbo[picNext], eShift_state,-eShift[eIndex], -eShift[eIndex + 1]);
+     picLast = picNext;
+     picNext = (picLast + 1)%2;
 
+     
+     //let picData = new Float32Array(nParticles*4);
+     //gl.readPixels(0, 0, nParticles, 1.0, gl.RGBA, gl.FLOAT, picData);
 
      render(gl, programInfo_Render, buffers, ctex[cLast]); 
 
       
       PrepRenderDotsContext(gl, programInfo_RenderDot, dotbuffers);
-     for (let jj = 1; jj < nParticles; ++jj)
-     {
+      RunRenderDots(gl, programInfo_RenderDot,1,1,1,1, [2*(mousePx-0.5),-2*(mousePy-0.5), -3], dotsides)
+    /*  for (let jj = 1; jj < nParticles; ++jj)
+
+      {
        let pIndex = jj*4;
        let r =  initial_color_data[pIndex];
        let g =  initial_color_data[pIndex + 1];
@@ -1000,7 +1055,8 @@ console.log(vel_str);
        let a =  initial_color_data[pIndex + 3];
        
        RunRenderDots(gl, programInfo_RenderDot,r,g,b,a, [2*(pData[pIndex]-0.5),-2*(pData[pIndex+1]-0.5), -3], dotsides); 
-     }   
+       RunRenderDots(gl, programInfo_RenderDot,r,g,b,a, [2*(picData[pIndex]-0.5),-2*(picData[pIndex+1]-0.5), -3], dotsides); 
+     }  */  
 
      requestAnimationFrame(update);
    }
@@ -1175,7 +1231,7 @@ function RunRenderDots(gl, programInfo, r,g,b,a, position, dotsides)
    const modelViewMatrix = mat4.create();
 
    mat4.translate(modelViewMatrix, modelViewMatrix, position); 
-   mat4.scale(modelViewMatrix,modelViewMatrix,[0.01,0.01,0.01]) ;
+   mat4.scale(modelViewMatrix,modelViewMatrix,[0.05,0.05,0.05]) ;
 
    gl.uniformMatrix4fv(
       programInfo.uniformLocations.modelViewMatrix,
@@ -1224,7 +1280,7 @@ function RunUpdateVelocity(gl, programInfo, buffers, ptex, vtex, vfbo, deltaTime
   // Set Uniforms
   gl.uniform1f(programInfo.uniformLocations.uflipY, -1);
   gl.uniform1f(programInfo.uniformLocations.uDeltaTime, deltaTime);
-  gl.uniform1f(programInfo.uniformLocations.uForceConstant, input);
+  gl.uniform1f(programInfo.uniformLocations.uForceConstant, 5);
   gl.uniform2f(programInfo.uniformLocations.uMousePosition, mousePx, mousePy);
   
   gl.uniform1i(programInfo.uniformLocations.uSamplerPosition, 0);
@@ -1235,6 +1291,37 @@ function RunUpdateVelocity(gl, programInfo, buffers, ptex, vtex, vfbo, deltaTime
   gl.bindTexture(gl.TEXTURE_2D, ptex); 
   gl.activeTexture(gl.TEXTURE1);
   gl.bindTexture(gl.TEXTURE_2D, vtex); 
+   
+  // Set Framebuffer
+  setFramebuffer(gl, vfbo, nParticles, 1);
+
+  // do drawing to frame buffer 
+  gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+ 
+}
+
+
+function RunUpdateVelocityPiC(gl, programInfo, buffers, ptex, vtex, pictex, vfbo, deltaTime) 
+{
+  setupContext(gl, programInfo, buffers);
+  
+  // Set Uniforms
+  gl.uniform1f(programInfo.uniformLocations.uflipY, -1);
+  gl.uniform1f(programInfo.uniformLocations.uDeltaTime, deltaTime);
+  gl.uniform1f(programInfo.uniformLocations.uForceConstant, input);
+
+  
+  gl.uniform1i(programInfo.uniformLocations.uSamplerPosition, 0);
+  gl.uniform1i(programInfo.uniformLocations.uSamplerVelocity, 1);
+  gl.uniform1i(programInfo.uniformLocations.uSamplerParticleInCell, 2);
+  
+  // Bind textures in same order as above
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, ptex); 
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, vtex); 
+  gl.activeTexture(gl.TEXTURE2);
+  gl.bindTexture(gl.TEXTURE_2D, pictex);
    
   // Set Framebuffer
   setFramebuffer(gl, vfbo, nParticles, 1);

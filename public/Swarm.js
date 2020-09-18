@@ -1,13 +1,13 @@
 
-const nCellsX = 100;
-const nCellsY = 100;
-var nParticles = 500;
+const nCellsX = 600;
+const nCellsY = 300;
+var nParticles = 15000;
 var editClick = true;
-var input = 0.5;
+var input = 5;
 var step = 0.1;
-var dotsides = 5;
+var dotsides = 6;
 const eShift = [0, 0,   1, 0,   0, 1,  1, 1]; // states are 0,1,2,3
-const componentLookUp = [0,1,2,3,1,0,3,2,2,3,0,1,3,2,1,0];
+const componentLookUp = [0,1,2,3,  1,0,3,2,  2,3,0,1,  3,2,1,0];
 var lowest_score;
 var highest_score;
 var best_order;
@@ -16,6 +16,8 @@ var switchCount = [];
 var mousePx = 0.5;
 var mousePy = 0.5;
 var fieldOfView = 45;
+const shift_sequence = [0,1,2,3,1,2];
+const shift_total = 6;
 const actionShift = [ 0,0,0,   1,0,0,    0,1,0,   1,1,0, 
                    -1,0,0,   0,0,0,   -1,1,0,   0,1,0,
                     0,-1,0,  1,-1,0,   0,0,0,   1,0,0,  
@@ -26,12 +28,20 @@ const offSetLookUp = [
                       0,0,                     1/nCellsX, 0,              0,1/nCellsY ,            1/nCellsX, 1/nCellsY ,
                      -1/nCellsX, 0 ,           0,0 ,                     -1/nCellsX, 1/nCellsY ,   0, 1/nCellsY ,
                       0, -1/nCellsY ,          1/nCellsX, -1/nCellsY ,    0,0 ,                    1/nCellsX, 0 ,
-                     -1/nCellsX, -1/nCellsY ,  0, -1/nCellsY ,           -1/nCellsX, 0 ,           0,0 
+                     -1/nCellsX, -1/nCellsY ,  0, -1/nCellsY ,           -1/nCellsX, 0 ,           0,0 ,
                    ];
+const offSetReverseLookUp = [0.5/nCellsX, 0.5/nCellsY,     -0.5/nCellsX, 0.5/nCellsY,     0.5/nCellsX, -0.5/nCellsY,   -0.5/nCellsX, -0.5/nCellsY, 
+                            -1.5/nCellsX, 0.5/nCellsY,     -0.5/nCellsX, 0.5/nCellsY,    -1.5/nCellsX, -0.5/nCellsY,   -0.5/nCellsX, -0.5/nCellsY,
+                             0.5/nCellsX,-1.5/nCellsY,     -0.5/nCellsX,-1.5/nCellsY,     0.5/nCellsX, -0.5/nCellsY,   -0.5/nCellsX, -0.5/nCellsY,
+                            -1.5/nCellsX,-1.5/nCellsY,     -0.5/nCellsX,-1.5/nCellsY,    -1.5/nCellsX, -0.5/nCellsY,   -0.5/nCellsX, -0.5/nCellsY,];
 
-const collisionLookUpQuadOrientation = [1,2,3, 0,3,2, 3,0,1, 2,1,0];
 
-const collisionLookUpComponentAdjustment = [3,0,1,2,  1,0,3,2,  3,2,1,0,  1,2,3,0];
+
+// Specifies how the other three components are to be organized when streaming within a quad for case 0,1,2,and 3 respectively
+const streamLookUp1 = [1,2,3, 0,3,2, 3,0,1, 2,1,0];
+
+// Specifies how the component momenta need to be exchanged according to the case of StreamLookUp1
+const streamLookUp2 = [3,0,1,2,  1,0,3,2,  3,2,1,0,  1,2,3,0];
 
 
 
@@ -219,18 +229,11 @@ function main()
     {
 
       vec4 current_position = texture(uSamplerPosition, vTextureCoord);
-      //vec4 scaled_position = current_position *0.9 + .05;
 
-      int cell_id = texture(uSamplerCell, current_position.rg).r;
-      int particle_id = int(floor(vTextureCoord.x*float(uNumOfParticles)));
+      vec4 velocity_increment = texture(uSamplerVelocity, vTextureCoord); 
+
+      new_position = current_position + velocity_increment * uDeltaTime*vec4(0.5,1.0,0.0,0.0);  
   
-      //int is_same_id = 1 - abs(sign(particle_id - cell_id));
-      int is_same_id = 1;
-      vec4 velocity_increment = float(is_same_id)*texture(uSamplerVelocity, vTextureCoord); 
-
-      new_position = current_position + velocity_increment * uDeltaTime;  
-      //new_position = vec4(float(particle_id), float(cell_id),float(is_same_id),0.0);  
-      //new_position = vec4(vTextureCoord.x*float(uNumOfParticles),0,0,0);     
     } `;
 
   const UpdateVelocity = `#version 300 es
@@ -249,11 +252,24 @@ function main()
   void main(void) 
   {
     // determine force
-    vec2 dr = normalize(uMousePosition - texture(uSamplerPosition, vTextureCoord).rg);
-    vec2 force = dr*uForceConstant;
+
+    vec2 d = uMousePosition - texture(uSamplerPosition, vTextureCoord).rg;
+
+    if (abs(d.x) > 0.5)
+      d.x = -(d.x - float(sign(d.x))*0.5);
+
+    if (abs(d.y) > 0.5)
+      d.y = -(d.y - float(sign(d.y))*0.5);
+
+    vec2 dr = normalize(d);
+
+    vec2 force = (dr)*uForceConstant;
+
+ 
+
     if ( vTextureCoord.r > uInvNumOfParticles)
     {
-      new_velocity = 0.999*texture(uSamplerVelocity, vTextureCoord) + vec4(force,0.0,0.0) * uDeltaTime; 
+      new_velocity = 0.7*texture(uSamplerVelocity, vTextureCoord) + vec4(force,0.0,0.0) * uDeltaTime; 
     }
     else
     {
@@ -311,7 +327,12 @@ function main()
     {
       ivec4 c = texture(uSamplerCell0, vTextureCoord);
       ivec4 a = texelFetch(uSamplerAction1, ivec2(c.r,0), 0);
-      new_c = ivec4(c.r, c.gba + a.rgb); 
+      
+      ivec3 new_action = c.gba + a.rgb;
+
+      ivec3 true_if_small = sign(sign(ivec3(2,2,2) - abs(new_action)) + 1);
+      new_action = sign(new_action)*ivec3(2,2,2)*(1-true_if_small) + new_action*(true_if_small);
+      new_c = ivec4(c.r, new_action); 
     } `;
 
   const Exchange = `#version 300 es
@@ -340,7 +361,7 @@ function main()
       
       float x_index_f = float(x_index)*0.01 + 0.005;
       float y_index_f = float(y_index)*0.01 + 0.005;
-
+      //exchange = ivec4(100.0*(vTextureCoord),100.0*(vTextureCoord));
       exchange = texture(uSamplerSwitch1, vec2(x_index_f, y_index_f));
 
     } `;
@@ -428,7 +449,7 @@ function main()
     uniform highp isampler2D uSamplerCell0;
     uniform highp isampler2D uSamplerExchange1;
     uniform int  uShiftState;
-    uniform vec2 uExShiftOffSet;
+    uniform vec2 uOffSetReverseLookUp[16];
     uniform vec2 uCellSpaceSize;
     uniform int uComponentLookUp[16];
     uniform vec2 uOffSetLookUp[16];
@@ -444,23 +465,27 @@ function main()
     {
       ivec2 g2 = ivec2(vTextureCoord * uCellSpaceSize) % 2;
       int g = 2*g2.y + g2.x;
-
      
-
-      ivec4 exchange_data = texture(uSamplerExchange1, vTextureCoord + uExShiftOffSet);
       int component = uComponentLookUp[4*g +uShiftState];
+
+      vec2 reverseOffSet = uOffSetReverseLookUp[4*uShiftState + g];
+      ivec4 exchange_data = texture(uSamplerExchange1, vTextureCoord + reverseOffSet);
+      
+      
       int new_component =  exchange_data[component];
+      
       int index = 4*component + new_component;
       
       vec2 texture_offset = uOffSetLookUp[index];
       ivec3 actionShift = uActionShift[index];
       
-
       ivec4 cell_data = texture(uSamplerCell0, vTextureCoord + texture_offset);
-      
-      new_cell_data = cell_data + ivec4(0, actionShift)*sign(cell_data.r);
 
-      // need to correct new_cell data for the change in action due to moving the cell
+      // return correct cell data and adjust the action due to the change
+      //new_cell_data = ivec4(100.0*(vTextureCoord + reverseOffSet) ,0,0);
+      //new_cell_data = ivec4(g,component, new_component, index);
+      //new_cell_data = exchange_data;
+      new_cell_data = cell_data + ivec4(0, actionShift)*sign(cell_data.r);
 
     } `;
 
@@ -499,6 +524,40 @@ function main()
     new_position =  t_new_position - floor(t_new_position); 
   } `;
 
+  const UpdatePositionWithParticleInCell = `#version 300 es
+  precision highp float;
+  uniform sampler2D uSamplerPosition;
+  uniform sampler2D uSamplerParticleInCell;
+  uniform vec2 uCellSpaceSize;
+  uniform vec2 uInvCellSpaceSize;
+  uniform float uInvNumOfParticles;
+
+  in highp vec2 vTextureCoord;
+
+  out vec4 new_position;
+
+  void main(void) 
+  {
+    
+    vec4 new_pic_position = texture(uSamplerParticleInCell, vTextureCoord);
+
+    vec4 position = texture(uSamplerPosition, vTextureCoord);
+
+
+
+    vec4 delta = vec4(floor(  ((position - new_pic_position)*vec4(uCellSpaceSize,0.0,0.0)) + vec4(0.5,0.5,0,0) ));
+
+    if (vTextureCoord.r > uInvNumOfParticles)
+    {
+      new_position = position - 1.0*delta*vec4(uInvCellSpaceSize.x,uInvCellSpaceSize.y,0.0,0.0);
+    }
+    else
+    {
+      new_position = vec4(0.0,0.0,0.0,0.0);
+    }
+
+  } `;
+
   const UpdateVelocityPiC = `#version 300 es
   precision highp float;
   uniform sampler2D uSamplerVelocity;
@@ -517,13 +576,19 @@ function main()
     vec4 p = texture(uSamplerPosition, vTextureCoord);
     vec4 pic = texture(uSamplerParticleInCell, vTextureCoord);
     vec4 r = pic - p;
+
+    if (abs(r.x) > 1.0)
+      r.x = -1.0*(r.x -sign(r.x));
+    if ((abs(r.y) > 1.0))
+      r.y = -1.0*(r.y -sign(r.y));
+
     float force = length(r)*uForceConstant;
     vec4 dr = normalize(r);
-    //new_velocity = pic;
+ 
 
     if ( vTextureCoord.r > uInvNumOfParticles)
     {
-      new_velocity = texture(uSamplerVelocity,vTextureCoord) + force*dr;
+      new_velocity = texture(uSamplerVelocity, vTextureCoord) + force*dr;
     }
     else
     {
@@ -533,71 +598,157 @@ function main()
  
   } `;
 
-  const CollisionLBM = `#version 300 es
+  const StreamLBM = `#version 300 es
   precision highp float;
-  uniform sampler2D uSamplerPiC;
+  uniform sampler2D uSamplerCellPosition;
   uniform highp isampler2D uSamplerQuadData;
   uniform sampler2D uSamplerMomenta;
-  uniform vec2 uExShiftOffSet;
-  uniform float uTao;
-  uniform float uInvNumOfParticles;
+  uniform sampler2D uSamplerMomentaDelta;
   uniform int  uShiftState;
-  uniform vec2 uExShiftOffSet;
+  uniform vec2 uShiftOffSet;
   uniform vec2 uCellSpaceSize;
   uniform int uComponentLookUp[16];
-  uniform ivec3 uLookUp1[4]; //collisionLookUpQuadOrientation[4]; // = [1,2,3, 0,3,2, 3,0,1, 2,1,0];
-  uniform ivec4 uLookUp2[4]; //collisionLookUpComponentAdjustment[4]; // = [3,0,1,2,  1,0,3,2,  3,2,1,0,  1,2,3,0];
+  uniform ivec3 uLookUp1[4]; 
+  uniform ivec4 uLookUp2[4];
   
   in highp vec2 vTextureCoord;
 
-  out vec4 new_velocity;
+  out vec4 new_momenta;
 
   void main(void) 
   {
-    vec2 cell_position = texture(uSamplerPiC, vTextureCoord).rg;
-    vec4 quad_ids = texture(uSamplerQuadData, cell_position + uExShiftOffSet);
+    vec2 cell_position = texture(uSamplerCellPosition, vTextureCoord).rg;
+    
+    ivec4 quad_ids = texture(uSamplerQuadData, cell_position + uShiftOffSet);
 
+    
     // we now have the relevant particle ID's which we can exchange momenta with
     // we need to know what position (component) we are in relative to the quad i.e. 0,1,2, or 3
 
-    ivec2 g2 = ivec2(vTextureCoord * uCellSpaceSize) % 2;
+    ivec2 g2 = ivec2(cell_position * uCellSpaceSize) % 2;
     int g = 2*g2.y + g2.x;
     // g is the global position
     // component is what position the particle is within the quad
-    int c = uComponentLookUp[4*g +uShiftState];
+    int c = uComponentLookUp[4*g + uShiftState];
 
     // according to our component we should loop through each other component and carry out the exchange process
-    // each relation will have a specific exchange, but these exchange details should be packed into vec4 vectors
+    // uLookUp1 places the other three cells into a horizonally related cell (H), vertically related cell (V), and  a diagonally related cell (D)
 
 
     ivec3 id_components =  uLookUp1[c];
-    int id_A = id_components.r;
-    int id_B = id_components.g;
-    int id_C = id_components.b;
+    int id_H = quad_ids[id_components.r];
+    int id_V = quad_ids[id_components.g];
+    int id_D = quad_ids[id_components.b];
 
     
-    //look up for integers
-    vec4 X = teture(uSamplerMomenta, vTextureCoord);
-    vec4 A = texelFetch(uSamplerMomenta, id_A, 0);
-    vec4 B = texelFetch(uSamplerMomenta, id_B, 0);
-    vec4 C = texelFetch(uSamplerMomenta, id_C, 0);
-    
-    int 0th component
-    [0] = A[]
+    //look up momenta data from mtex
+    vec4 X = texture(uSamplerMomenta, vTextureCoord);
+    vec4 H = texelFetch(uSamplerMomenta, ivec2(id_H,0), 0);
+    vec4 V = texelFetch(uSamplerMomenta, ivec2(id_V,0), 0);
+    vec4 D = texelFetch(uSamplerMomenta, ivec2(id_D,0), 0);
+  
+    float alpha = 0.2;
+    float beta = 0.2;
 
     vec4 Y = vec4(0.0,0.0,0.0,0.0);
 
     ivec4 O = uLookUp2[c];
-    Y[O.r] = alpha*A[O.r] + beta*C[O.r];
-    Y[O.g] = alpha*A[O.g] + beta*C[O.g];
+    Y[O.r] = alpha*H[O.r] + beta*D[O.r];
+    Y[O.g] = alpha*V[O.g] + beta*D[O.g];
 
-    Y[O.b] = -(alpha*sign(id_A) + beta*sign(id_C))*X[0.b];
-    Y[O.a] = -(alpha*sign(id_B) + beta*sign(id_C))*X[0.a];
+    Y[O.b] = -(alpha*float(sign(id_H)) + beta*float(sign(id_D)) )*X[O.b];
+    Y[O.a] = -(alpha*float(sign(id_V)) + beta*float(sign(id_D)) )*X[O.a];
+
+    new_momenta = texture(uSamplerMomentaDelta, vTextureCoord) + Y;
 
    
   } `;
 
+  const ConvertVelocityToMomenta = `#version 300 es
+  precision highp float;
+  uniform sampler2D uSamplerVelocity;
+  uniform float uInvNumOfParticles;
+  in highp vec2 vTextureCoord;
+
+  out vec4 momenta;
+
+  void main(void) 
+  {
+    float base_load = 0.7;
+
+    vec4 Y = vec4(base_load, base_load, base_load, base_load);
+    vec4 vel = texture(uSamplerVelocity, vTextureCoord);
+
+    if (vel.r > 0.0)
+      Y[1] += vel.r;
+    else
+      Y[3] += -vel.r;
+
+    if (vel.g > 0.0)
+      Y[2] += vel.g;
+    else
+      Y[0] += -vel.g;
+
+   
+      //momenta = Y;
+      if ( vTextureCoord.r > uInvNumOfParticles)
+      {
+      momenta = Y;
+      }
+      else
+      {
+      momenta = vec4(0.0, 0.0, 0.0, 0.0);
+      } 
+  } `;
+
+  const ConvertMomentaToVelocity = `#version 300 es
+  precision highp float;
+  uniform sampler2D uSamplerMomenta;
+  uniform float uInvNumOfParticles;
+  in highp vec2 vTextureCoord;
+
+  out vec4 velocity;
+
+  void main(void) 
+  {
+    vec4 momenta = texture(uSamplerMomenta, vTextureCoord);
   
+    //velocity = vec4(momenta.g - momenta.a, momenta.b - momenta.r,  0.0, 0.0);
+    
+    if ( vTextureCoord.r > uInvNumOfParticles)
+    {
+      velocity = vec4(momenta.g - momenta.a, momenta.b - momenta.r,  0.0, 0.0);
+    }
+    else
+    {
+      velocity = vec4(0.0, 0.0, 0.0, 0.0);
+    } 
+
+  } `;
+
+  const StreamLBMPart2 = `#version 300 es
+  precision highp float;
+  uniform sampler2D uSamplerMomenta;
+  uniform sampler2D uSamplerMomentaDelta;
+  in highp vec2 vTextureCoord;
+
+  out vec4 new_momenta;
+
+  void main(void) 
+  {
+    new_momenta = texture(uSamplerMomenta,vTextureCoord) + texture(uSamplerMomentaDelta, vTextureCoord);
+  } `;
+
+  const ClearFloatTexture = `#version 300 es
+  precision highp float;
+  in highp vec2 vTextureCoord;
+
+  out vec4 float_tex;
+
+  void main(void) 
+  {
+    float_tex = vec4(0.0,  0.0,  0.0,  0.0);
+  } `;
   
   const ClearAction = `#version 300 es
   precision highp float;
@@ -610,18 +761,7 @@ function main()
     action = ivec4(0,0,0,0);
   } `;
 
-  const RepulsiveForce = `#version 300 es
-  precision highp float;
-  in highp vec2 vTextureCoord;
-
-  out ivec4 action;
-
-  void main(void) 
-  {
-    // We need to sample all the cells according to the shift
-    action = ivec4(0,0,0,0);
-  } `;
-
+ 
    
   // Initialize shader programs
   const program_RenderDot = initShaderProgram(gl, DotVertexShader, DotFragmentShader);
@@ -639,9 +779,14 @@ function main()
   const program_QuadCompress = initShaderProgram(gl, vsSource, QuadCompress);
   const program_QuadAvgVelocity = initShaderProgram(gl, vsSource, QuadAvgVelocity);
   const program_UpdateVelocityViaQuadAvg = initShaderProgram(gl, vsSource, UpdateVelocityViaQuadAvg);
+  const program_StreamLBM = initShaderProgram(gl, vsSource, StreamLBM);
+  const program_StreamLBMPart2 = initShaderProgram(gl, vsSource, StreamLBMPart2);
+  const program_ConvertVelocityToMomenta = initShaderProgram(gl, vsSource, ConvertVelocityToMomenta);
+  const program_ConvertMomentaToVelocity = initShaderProgram(gl, vsSource, ConvertMomentaToVelocity);
+  const program_ClearFloatTexture = initShaderProgram(gl, vsSource, ClearFloatTexture);
+  const program_UpdatePositionWithParticleInCell = initShaderProgram(gl, vsSource, UpdatePositionWithParticleInCell);
 
- 
-
+  
   const programInfo_RenderDot = 
   {
     program: program_RenderDot,
@@ -695,6 +840,29 @@ function main()
         uDeltaTime: gl.getUniformLocation(program_UpdatePosition, 'uDeltaTime'),  
        },
   };
+
+  const programInfo_UpdatePositionWithParticleInCell = 
+  {
+    program: program_UpdatePositionWithParticleInCell,
+      attribLocations: 
+      {
+        vertexPosition: gl.getAttribLocation(program_UpdatePositionWithParticleInCell, 'aVertexPosition'),
+        textureCoord: gl.getAttribLocation(program_UpdatePositionWithParticleInCell, 'aTextureCoord'),
+      },
+      uniformLocations: 
+      {
+        projectionMatrix: gl.getUniformLocation(program_UpdatePositionWithParticleInCell, 'uProjectionMatrix'),
+        modelViewMatrix: gl.getUniformLocation(program_UpdatePositionWithParticleInCell, 'uModelViewMatrix'),
+        uflipY: gl.getUniformLocation(program_UpdatePositionWithParticleInCell,'uflipY'),
+        uSamplerPosition: gl.getUniformLocation(program_UpdatePositionWithParticleInCell, 'uSamplerPosition'),   
+        uSamplerParticleInCell: gl.getUniformLocation(program_UpdatePositionWithParticleInCell, 'uSamplerParticleInCell'),
+        uCellSpaceSize: gl.getUniformLocation(program_UpdatePositionWithParticleInCell, 'uCellSpaceSize'),
+        uInvCellSpaceSize: gl.getUniformLocation(program_UpdatePositionWithParticleInCell, 'uInvCellSpaceSize'),
+        uInvNumOfParticles: gl.getUniformLocation(program_UpdatePositionWithParticleInCell, 'uInvNumOfParticles'),
+       },
+  };
+
+
 
   const programInfo_WrapPosition = 
   {
@@ -829,13 +997,15 @@ function main()
         uSamplerExchange1: gl.getUniformLocation(program_UpdateCellState, 'uSamplerExchange1'), 
         uCellSpaceSize: gl.getUniformLocation(program_UpdateCellState, 'uCellSpaceSize'),
         uShiftState: gl.getUniformLocation(program_UpdateCellState, 'uShiftState'), 
-        uExShiftOffSet: gl.getUniformLocation(program_UpdateCellState, 'uExShiftOffSet'), 
-        uExLookUp: gl.getUniformLocation(program_UpdateCellState, 'uExLookUp'), 
+        uOffSetReverseLookUp: gl.getUniformLocation(program_UpdateCellState, 'uOffSetReverseLookUp'), 
         uActionShift: gl.getUniformLocation(program_UpdateCellState, 'uActionShift'), 
         uComponentLookUp: gl.getUniformLocation(program_UpdateCellState, 'uComponentLookUp'), 
         uOffSetLookUp: gl.getUniformLocation(program_UpdateCellState, 'uOffSetLookUp'), 
        },
   };
+
+
+
 
   const programInfo_UpdateParticleInCell = 
   {
@@ -942,6 +1112,107 @@ function main()
         uDeltaTime: gl.getUniformLocation(program_UpdateVelocityPiC,'uDeltaTime'),
        },
   };
+
+
+  const programInfo_StreamLBM = 
+  {
+    program: program_StreamLBM,
+      attribLocations: 
+      {
+        vertexAction: gl.getAttribLocation(program_StreamLBM, 'aVertexAction'),
+        textureCoord: gl.getAttribLocation(program_StreamLBM, 'aTextureCoord'),
+      },
+      uniformLocations: 
+      {
+        projectionMatrix: gl.getUniformLocation(program_StreamLBM, 'uProjectionMatrix'),
+        modelViewMatrix: gl.getUniformLocation(program_StreamLBM, 'uModelViewMatrix'),
+        uflipY: gl.getUniformLocation(program_StreamLBM,'uflipY'),
+        uSamplerCellPosition: gl.getUniformLocation(program_StreamLBM, 'uSamplerCellPosition'), 
+        uSamplerQuadData: gl.getUniformLocation(program_StreamLBM, 'uSamplerQuadData'), 
+        uSamplerMomenta: gl.getUniformLocation(program_StreamLBM, 'uSamplerMomenta'), 
+        uSamplerMomentaDelta: gl.getUniformLocation(program_StreamLBM, 'uSamplerMomentaDelta'),
+        uShiftState: gl.getUniformLocation(program_StreamLBM, 'uShiftState'),
+        uShiftOffSet: gl.getUniformLocation(program_StreamLBM, 'uShiftOffSet'),
+        uCellSpaceSize: gl.getUniformLocation(program_StreamLBM, 'uCellSpaceSize'),
+        uComponentLookUp: gl.getUniformLocation(program_StreamLBM, 'uComponentLookUp'), 
+        uLookUp1: gl.getUniformLocation(program_StreamLBM, 'uLookUp1'), 
+        uLookUp2: gl.getUniformLocation(program_StreamLBM, 'uLookUp2'), 
+       },
+  };
+
+  const programInfo_ClearFloatTexture = 
+  {
+    program: program_ClearFloatTexture,
+      attribLocations: 
+      {
+        vertexAction: gl.getAttribLocation(program_ClearFloatTexture, 'aVertexAction'),
+        textureCoord: gl.getAttribLocation(program_ClearFloatTexture, 'aTextureCoord'),
+      },
+      uniformLocations: 
+      {
+        projectionMatrix: gl.getUniformLocation(program_ClearFloatTexture, 'uProjectionMatrix'),
+        modelViewMatrix: gl.getUniformLocation(program_ClearFloatTexture, 'uModelViewMatrix'),
+        uflipY: gl.getUniformLocation(program_ClearFloatTexture,'uflipY'),
+       },
+  };
+
+  const programInfo_StreamLBMPart2 = 
+  {
+    program: program_StreamLBMPart2,
+      attribLocations: 
+      {
+        vertexAction: gl.getAttribLocation(program_StreamLBMPart2, 'aVertexAction'),
+        textureCoord: gl.getAttribLocation(program_StreamLBMPart2, 'aTextureCoord'),
+      },
+      uniformLocations: 
+      {
+        projectionMatrix: gl.getUniformLocation(program_StreamLBMPart2, 'uProjectionMatrix'),
+        modelViewMatrix: gl.getUniformLocation(program_StreamLBMPart2, 'uModelViewMatrix'),
+        uflipY: gl.getUniformLocation(program_StreamLBMPart2,'uflipY'),
+        uSamplerMomenta: gl.getUniformLocation(program_StreamLBMPart2, 'uSamplerMomenta'), 
+        uSamplerMomentaDelta: gl.getUniformLocation(program_StreamLBMPart2, 'uSamplerMomentaDelta'), 
+       },
+  };
+
+    const programInfo_ConvertVelocityToMomenta = 
+  {
+    program: program_ConvertVelocityToMomenta,
+      attribLocations: 
+      {
+        vertexAction: gl.getAttribLocation(program_ConvertVelocityToMomenta, 'aVertexAction'),
+        textureCoord: gl.getAttribLocation(program_ConvertVelocityToMomenta, 'aTextureCoord'),
+      },
+      uniformLocations: 
+      {
+        projectionMatrix: gl.getUniformLocation(program_ConvertVelocityToMomenta, 'uProjectionMatrix'),
+        modelViewMatrix: gl.getUniformLocation(program_ConvertVelocityToMomenta, 'uModelViewMatrix'),
+        uflipY: gl.getUniformLocation(program_ConvertVelocityToMomenta,'uflipY'),
+        uSamplerVelocity: gl.getUniformLocation(program_ConvertVelocityToMomenta, 'uSamplerVelocity'), 
+        uInvNumOfParticles: gl.getUniformLocation(program_ConvertVelocityToMomenta, 'uInvNumOfParticles'), 
+       },
+  };
+
+  const programInfo_ConvertMomentaToVelocity = 
+  {
+    program: program_ConvertMomentaToVelocity,
+      attribLocations: 
+      {
+        vertexAction: gl.getAttribLocation(program_ConvertMomentaToVelocity, 'aVertexAction'),
+        textureCoord: gl.getAttribLocation(program_ConvertMomentaToVelocity, 'aTextureCoord'),
+      },
+      uniformLocations: 
+      {
+        projectionMatrix: gl.getUniformLocation(program_ConvertMomentaToVelocity, 'uProjectionMatrix'),
+        modelViewMatrix: gl.getUniformLocation(program_ConvertMomentaToVelocity, 'uModelViewMatrix'),
+        uflipY: gl.getUniformLocation(program_ConvertMomentaToVelocity,'uflipY'),
+        uSamplerMomenta: gl.getUniformLocation(program_ConvertMomentaToVelocity, 'uSamplerMomenta'),
+        uInvNumOfParticles: gl.getUniformLocation(program_ConvertMomentaToVelocity, 'uInvNumOfParticles'), 
+        
+       },
+  };
+
+
+
   
 
   // Make rectangle for displaying stuff
@@ -965,6 +1236,7 @@ function main()
   var initial_position_data = new Float32Array(nParticles*4);
   var initial_pic_data = new Float32Array(nParticles*4);
   var initial_velocity_data = new Float32Array(nParticles*4);
+  var initial_momenta_data = new Float32Array(nParticles*4);
 
   for (let jj = 1; jj < nParticles; ++jj)
   {
@@ -975,6 +1247,9 @@ function main()
     {
       let x_r = 0.8*Math.random()+0.1;
       let y_r = 0.8*Math.random()+0.1; 
+
+      //let x_r = 0.66600;
+      //let y_r = 0.9495; 
       let ix = Math.floor(x_r*nCellsX);
       let iy = Math.floor(y_r*nCellsY);
       let cIndex = 4*(ix + iy*nCellsX);
@@ -986,14 +1261,28 @@ function main()
         initial_position_data[index] = x_r;
         initial_pic_data[index] = (Math.floor(x_r*nCellsX) + 0.5)/nCellsX;
         initial_velocity_data[index] = (Math.random() - 0.5);
+       //initial_velocity_data[index] = 0.4;
         initial_color_data[index] = Math.random();
         initial_position_data[index + 1] = y_r;
         initial_pic_data[index+ 1] = (Math.floor(y_r*nCellsY) + 0.5)/nCellsY;
         initial_velocity_data[index + 1] = Math.random() - 0.5;
-
+       //initial_velocity_data[index + 1] = 0.47;
         initial_color_data[index + 1] = Math.random();
         initial_color_data[index + 2] = Math.random();
         initial_color_data[index + 3] = 1.0;
+
+        if(initial_velocity_data[index + 1] >= 0)
+          initial_momenta_data[index] = initial_velocity_data[index+1];
+        else
+          initial_momenta_data[index+2] = -initial_velocity_data[index+1];
+
+        if(initial_velocity_data[index] >= 0)
+          initial_momenta_data[index+1] = initial_velocity_data[index];
+        else
+          initial_momenta_data[index+3] = -initial_velocity_data[index];
+
+
+       
 
         place_not_found = false;
         /*pos_str += x_r.toString()+", "+y_r.toString()+", 0, 0, ";
@@ -1007,12 +1296,15 @@ function main()
     } 
   }
 
+
+
+
   var colortex = createAndSetupTexture(gl);
   initializeParticleTexture(gl, colortex, initial_color_data);
  
 
-console.log(pos_str);
-console.log(vel_str);
+/* console.log(pos_str);
+console.log(vel_str); */
  
   var ptex = [];
   var pfbo = [];
@@ -1079,12 +1371,38 @@ console.log(vel_str);
     sfbo.push(fbo);
   }
 
+  var mtex = [];
+  var mfbo = [];
+  for(let ii = 0; ii < 2; ++ii)
+  {
+    let tex = createAndSetupTexture(gl);
+    initializeParticleTexture(gl, tex, null);
+    let fbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    mtex.push(tex);
+    mfbo.push(fbo);
+  }
+
+  var mtexdelta = [];
+  var mfbodelta = [];
+  for(let ii = 0; ii < 2; ++ii)
+  {
+    let tex = createAndSetupTexture(gl);
+    initializeParticleTexture(gl, tex, null);
+    let fbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    mtexdelta.push(tex);
+    mfbodelta.push(fbo);
+  }
+
 
   
   let InitialArray = [];
   InitializeSwitchTable(4, InitialArray);
-  var qtex = createAndSetupTexture(gl);
-  initializeSwitchTexture(gl, qtex, switchTable);
+  var switchtex = createAndSetupTexture(gl);
+  initializeSwitchTexture(gl, switchtex, switchTable);
 
 
 
@@ -1143,19 +1461,27 @@ console.log(vel_str);
   var cNext = 1;
   var picLast = 0;
   var picNext = 1;
-  var eShift_state = 2;
+  var mLast = 0;
+  var mNext = 1;
+  var mLastDelta = 0;
+  var mNextDelta = 1;
+  var eShift_state = 3;
+  var shift_index  = 0;
   
    var then = 0;
+  var picData = new Float32Array(nParticles*4);
+  let pData = new Float32Array(nParticles*4);
  
    function update(now) {
      now *= 0.001;  // convert to seconds
      const deltaTime = now - then;
      then = now;
+     let dt = 0.05;
 
-     RunUpdatePosition(gl, programInfo_UpdatePosition, buffers, ptex[pLast], vtex[vLast], ctex[cLast], pfbo[pNext], .001);
+     RunUpdatePosition(gl, programInfo_UpdatePosition, buffers, ptex[pLast], vtex[vLast], ctex[cLast], pfbo[pNext], dt);
      pLast = pNext;
      pNext = (pLast+1) % 2;
-     let pData = new Float32Array(nParticles*4);
+     
      gl.readPixels(0, 0, nParticles, 1.0, gl.RGBA, gl.FLOAT, pData);
    
 
@@ -1163,32 +1489,37 @@ console.log(vel_str);
      sLast = sNext;
      sNext = (sLast+1) % 2;
 
-     RunUpdateVelocity(gl, programInfo_UpdateVelocity, buffers, ptex[pLast], vtex[vLast], vfbo[vNext], 0.01)
-     vLast = vNext;
-     vNext = (vLast+1) % 2;
-     let vData = new Float32Array(nParticles*4);
-     gl.readPixels(0, 0, nParticles, 1.0, gl.RGBA, gl.FLOAT, vData);
+    //let sData = new Int32Array(nParticles*4);
+    //gl.readPixels(0, 0, nParticles, 1.0, gl.RGBA_INTEGER, gl.INT, sData);
 
-     RunUpdateVelocityPiC(gl, programInfo_UpdateVelocityPiC, buffers, ptex[pLast], vtex[vLast], pictex[picLast], vfbo[vNext], 0.1) 
+     RunUpdateVelocity(gl, programInfo_UpdateVelocity, buffers, pictex[picLast], vtex[vLast], vfbo[vNext],dt);
+     //RunUpdateVelocity(gl, programInfo_UpdateVelocity, buffers, ptex[pLast], vtex[vLast], vfbo[vNext],0.01);
      vLast = vNext;
      vNext = (vLast+1) % 2;
-     gl.readPixels(0, 0, nParticles, 1.0, gl.RGBA, gl.FLOAT, vData);
+     //let vData = new Float32Array(nParticles*4);
+     //gl.readPixels(0, 0, nParticles, 1.0, gl.RGBA, gl.FLOAT, vData); 
+
+    
+     
      
 
+
+
+    // gl.readPixels(0, 0, nParticles, 1.0, gl.RGBA, gl.FLOAT, vData);
+    
 
      RunUpdateCellAction(gl, programInfo_UpdateCellAction, buffers, ctex[cLast], stex[sLast], cfbo[cNext]);
      cLast = cNext;
      cNext = (cLast+1)%2;
 
 
-     //let cData = new Int32Array(nCellsX*nCellsY*4);
-     //gl.readPixels(0, 0, nCellsX, nCellsY, gl.RGBA_INTEGER, gl.INT, cData);
+/*      let cData = new Int32Array(nCellsX*nCellsY*4);
+     gl.readPixels(0, 0, nCellsX, nCellsY, gl.RGBA_INTEGER, gl.INT, cData); */
 
      RunClearAction(gl, programInfo_ClearAction, buffers, sfbo[sLast]);
+  
 
-     RunWrapPosition(gl, programInfo_WrapPosition, buffers, ptex[pLast], pfbo[pNext]);
-     pLast = pNext;
-     pNext = (pLast+1) % 2;
+
 
     
 
@@ -1196,51 +1527,93 @@ console.log(vel_str);
     
      
  
-     eShift_state = (eShift_state + 1) % 3;
-
-   /*   for(let eShift_state = 0; eShift_state < 4; ++eShift_state)
-     { */
-      let eIndex = eShift_state*2;
-      RunExchange(gl, programInfo_Exchange, buffers, ctex[cLast], qtex, efbo[0], eShift[eIndex],eShift[eIndex + 1] );
      
-    /*   let eData = new Int32Array(nCellsX*nCellsY);
-      gl.readPixels(0, 0, nCellsX/2, nCellsY/2, gl.RGBA_INTEGER, gl.INT, eData);
-  */
-      //console.log('ExCell 0: '+eData[0]+', '+eData[1]+', '+eData[2]+', '+eData[3]);
-      //console.log('ExCell 1: '+eData[4]+', '+eData[5]+', '+eData[6]+', '+eData[7]);
-      
+/*      if (eShift_state == 3)
+     {
+      eShift_state = (eShift_state + 1) % 4;
+     } */
+     //console.log(eShift_state);
+
+
+      let eIndex = eShift_state*2;
+      RunExchange(gl, programInfo_Exchange, buffers, ctex[cLast], switchtex, efbo[0], eShift[eIndex],eShift[eIndex + 1] );
+     
+       //let eData = new Int32Array(nCellsX*nCellsY);
+      //gl.readPixels(0, 0, nCellsX/2, nCellsY/2, gl.RGBA_INTEGER, gl.INT, eData);
+  
+
  
       RunUpdateCellState(gl, programInfo_UpdateCellState, buffers, ctex[cLast], etex[0], cfbo[cNext], eShift_state, -eShift[eIndex], -eShift[eIndex + 1]);
-      cLast = cNext;
+       cLast = cNext;
       cNext = (cLast+1)%2;
-      //gl.readPixels(0, 0, nCellsX, nCellsY, gl.RGBA_INTEGER, gl.INT, cData);
+      //gl.readPixels(0, 0, nCellsX, nCellsY, gl.RGBA_INTEGER, gl.INT, cData); 
 
-     //}
+ /*     let count = 0;
+      for(let ii =0; ii < nCellsX; ++ii)
+      {
+        for (let jj =0; jj < nCellsY; ++jj)
+        {
+          count += Math.sign(cData[4*(nCellsX*jj + ii)]);
+
+        }
+      }
+
+      if (count != nParticles - 1)
+      {
+        console.log('Mismatch! Cell particles: '+count+' Actual particles:' +(nParticles - 1));
+      } */
+
      RunUpdateParticleInCell(gl, programInfo_UpdateParticleInCell, buffers, pictex[picLast], etex[0], picfbo[picNext], eShift_state,-eShift[eIndex], -eShift[eIndex + 1]);
      picLast = picNext;
      picNext = (picLast + 1)%2;
-     let picData = new Float32Array(nParticles*4);
      gl.readPixels(0, 0, nParticles, 1.0, gl.RGBA, gl.FLOAT, picData);
 
-       RunQuadAvgVelocity(gl, programInfo_QuadAvgVelocity, buffers, ctex[cLast], vtex[vLast], quadAvgVelfbo[0], eShift[eIndex], eShift[eIndex + 1]);
+     RunUpdatePositionWithParticleInCell(gl, programInfo_UpdatePositionWithParticleInCell, buffers, ptex[pLast], pictex[picLast], pfbo[pNext]) ;
+     pLast = pNext;
+     pNext = (pLast + 1)%2;
+     //gl.readPixels(0, 0, nParticles, 1.0, gl.RGBA, gl.FLOAT, pData);
 
-     let quadData = new Float32Array(nCellsX*nCellsY);
-      gl.readPixels(0, 0, nCellsX/2, nCellsY/2, gl.RGBA, gl.FLOAT, quadData);
-
-     RunUpdateVelocityViaQuadAvg(gl, programInfo_UpdateVelocityViaQuadAvg, buffers, pictex[picLast], quadAvgVeltex[0], vtex[vLast],  vfbo[vNext], -eShift[eIndex], -eShift[eIndex + 1]);
-     vLast = vNext;
-     vNext = (vLast+1) % 2;  
-     gl.readPixels(0, 0, nParticles, 1.0, gl.RGBA, gl.FLOAT, vData); 
+    
+    
+       RunConvertVelocityToMomenta(gl, programInfo_ConvertVelocityToMomenta, buffers, vtex[vLast], mfbo[mLast]);
      
+     //clear momenta Last Delta
+     RunClearFloatTexture(gl, programInfo_ClearFloatTexture, buffers, mfbodelta[mLastDelta], nParticles, 1.0);
+
+     for(let iii = 0; iii < 4; ++iii)
+     {
+   
+       
+       let eIndex2 = iii*2;
+     RunQuadCompress(gl, programInfo_QuadCompress, buffers, ctex[cLast], efbo[0], eShift[eIndex2], eShift[eIndex2 + 1] );
+    //let quadcompData = new Int32Array(nCellsX*nCellsY);
+    //gl.readPixels(0, 0, nCellsX/2, nCellsY/2, gl.RGBA_INTEGER, gl.INT, quadcompData); 
+
     
 
+     RunStreamLBM(gl, programInfo_StreamLBM, buffers, pictex[picLast], etex[0], mtex[mLast], mtexdelta[mLastDelta],mfbodelta[mNextDelta], iii, -eShift[eIndex2], -eShift[eIndex2 + 1]) ;
+     mLastDelta = mNextDelta;
+     mNextDelta = (mLastDelta+1) % 2;
+      //let mData = new Float32Array(nParticles*4);
+     //gl.readPixels(0, 0, nParticles, 1.0, gl.RGBA, gl.FLOAT, mData); 
+     }
+
+     RunStreamLBMPart2(gl, programInfo_StreamLBMPart2, buffers, mtex[mLast], mtexdelta[mLastDelta], mfbo[mNext]);
+     mLast = mNext;
+     mNext = (mLast+1) % 2;
+
+     RunConvertMomentaToVelocity(gl, programInfo_ConvertMomentaToVelocity, buffers, mtex[mLast], vfbo[vNext]);
+     vLast = vNext;
+     vNext = (vLast+1) % 2;   
+     
+     
      render(gl, programInfo_Render, buffers, ctex[cLast]); 
 
       
       PrepRenderDotsContext(gl, programInfo_RenderDot, dotbuffers);
-      RunRenderDots(gl, programInfo_RenderDot,1,1,1,1, [2*(mousePx-0.5),-2*(mousePy-0.5), -3], dotsides)
-        for (let jj = 1; jj < nParticles; ++jj)
-
+      RunRenderDots(gl, programInfo_RenderDot,1,1,1,1, [4*(mousePx-0.5),-2*(mousePy-0.5), -3], dotsides)
+         
+/*        for (let jj = 1; jj < nParticles; ++jj)
       {
        let pIndex = jj*4;
        let r =  initial_color_data[pIndex];
@@ -1248,9 +1621,13 @@ console.log(vel_str);
        let b =  initial_color_data[pIndex + 2];
        let a =  initial_color_data[pIndex + 3];
        
-       RunRenderDots(gl, programInfo_RenderDot,r,g,b,a, [2*(pData[pIndex]-0.5),-2*(pData[pIndex+1]-0.5), -3], dotsides); 
-       RunRenderDots(gl, programInfo_RenderDot,r,g,b,a, [2*(picData[pIndex]-0.5),-2*(picData[pIndex+1]-0.5), -3], dotsides); 
-     }  
+       RunRenderDots(gl, programInfo_RenderDot,r,g,b,1, [4*(pData[pIndex]-0.5),-2*(pData[pIndex+1]-0.5), -3], dotsides); 
+       RunRenderDots(gl, programInfo_RenderDot,r,g,b,1, [4*(picData[pIndex]-0.5),-2*(picData[pIndex+1]-0.5), -3], dotsides); 
+      } */     
+      
+      shift_index = (shift_index + 1) % shift_total;
+      eShift_state  = shift_sequence[shift_index];
+      //console.log(eShift_state);
 
      requestAnimationFrame(update);
    }
@@ -1272,7 +1649,7 @@ function render(gl, programInfo, buffers, renderTex) {
 
   // Create a perspective matrix
   const fieldOfView = 45 * Math.PI / 180;   // in radians
-  const aspect = gl.canvas.clientWidth / gl.canvas.clientHeight;
+  const aspect = 1;//gl.canvas.clientWidth / gl.canvas.clientHeight;
   const zNear = 0.0;
   const zFar = 100.0;
   const projectionMatrix = mat4.create();
@@ -1425,7 +1802,7 @@ function RunRenderDots(gl, programInfo, r,g,b,a, position, dotsides)
    const modelViewMatrix = mat4.create();
 
    mat4.translate(modelViewMatrix, modelViewMatrix, position); 
-   mat4.scale(modelViewMatrix,modelViewMatrix,[0.05,0.05,0.05]) ;
+   mat4.scale(modelViewMatrix,modelViewMatrix,[0.03,0.03,0.03]) ;
 
    gl.uniformMatrix4fv(
       programInfo.uniformLocations.modelViewMatrix,
@@ -1467,6 +1844,35 @@ function RunUpdatePosition(gl, programInfo, buffers, ptex, vtex, ctex, pfbo, del
 }
 
 
+function RunUpdatePositionWithParticleInCell(gl, programInfo, buffers, ptex, pictex, pfbo) 
+{
+  setupContext(gl, programInfo, buffers);
+  
+  // Set Uniforms
+  gl.uniform1f(programInfo.uniformLocations.uflipY, -1);
+  gl.uniform2f(programInfo.uniformLocations.uCellSpaceSize, nCellsX,nCellsY);
+  gl.uniform2f(programInfo.uniformLocations.uInvCellSpaceSize, 1/nCellsX, 1/nCellsY);
+  gl.uniform1f(programInfo.uniformLocations.uInvNumOfParticles, 1/nParticles);
+  
+
+  
+  // Bind textures in same order as above
+  gl.uniform1i(programInfo.uniformLocations.uSamplerPosition, 0);
+  gl.uniform1i(programInfo.uniformLocations.uSamplerParticleInCell, 1);
+  
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, ptex); 
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, pictex); 
+   
+  // Set Framebuffer
+  setFramebuffer(gl, pfbo, nParticles, 1);
+
+  // do drawing to frame buffer 
+  gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+ 
+}
+
 function RunUpdateVelocity(gl, programInfo, buffers, ptex, vtex, vfbo, deltaTime) 
 {
   setupContext(gl, programInfo, buffers);
@@ -1474,7 +1880,7 @@ function RunUpdateVelocity(gl, programInfo, buffers, ptex, vtex, vfbo, deltaTime
   // Set Uniforms
   gl.uniform1f(programInfo.uniformLocations.uflipY, -1);
   gl.uniform1f(programInfo.uniformLocations.uDeltaTime, deltaTime);
-  gl.uniform1f(programInfo.uniformLocations.uForceConstant, 5);
+  gl.uniform1f(programInfo.uniformLocations.uForceConstant, input);
   gl.uniform1f(programInfo.uniformLocations.uInvNumOfParticles, 1/nParticles);
   gl.uniform2f(programInfo.uniformLocations.uMousePosition, mousePx, mousePy);
   
@@ -1495,8 +1901,6 @@ function RunUpdateVelocity(gl, programInfo, buffers, ptex, vtex, vfbo, deltaTime
   gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
  
 }
-
-
 
 function RunUpdateVelocityViaQuadAvg(gl, programInfo, buffers, pictex, quadtex, vtex,  vfbo, shiftX, shiftY) 
 {
@@ -1536,7 +1940,7 @@ function RunUpdateVelocityPiC(gl, programInfo, buffers, ptex, vtex, pictex, vfbo
   // Set Uniforms
   gl.uniform1f(programInfo.uniformLocations.uflipY, -1);
   gl.uniform1f(programInfo.uniformLocations.uDeltaTime, deltaTime);
-  gl.uniform1f(programInfo.uniformLocations.uForceConstant, 7);
+  gl.uniform1f(programInfo.uniformLocations.uForceConstant, input);
   gl.uniform1f(programInfo.uniformLocations.uInvNumOfParticles, 1/nParticles);
 
   
@@ -1634,7 +2038,7 @@ function RunUpdateCellAction(gl, programInfo, buffers, ctex0, stex1, cfbo)
  
 }
 
-function RunExchange(gl, programInfo, buffers, ctex0, qtex1, efbo , shiftX, shiftY) 
+function RunExchange(gl, programInfo, buffers, ctex0, switchtex1, efbo , shiftX, shiftY) 
 {
   setupContext(gl, programInfo, buffers);
   
@@ -1661,7 +2065,7 @@ function RunExchange(gl, programInfo, buffers, ctex0, qtex1, efbo , shiftX, shif
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, ctex0); 
   gl.activeTexture(gl.TEXTURE1);
-  gl.bindTexture(gl.TEXTURE_2D, qtex1); 
+  gl.bindTexture(gl.TEXTURE_2D, switchtex1); 
 
 
    
@@ -1673,6 +2077,19 @@ function RunExchange(gl, programInfo, buffers, ctex0, qtex1, efbo , shiftX, shif
  
 }
 
+function RunClearFloatTexture(gl, programInfo, buffers, fbo, width, height) 
+{
+  setupContext(gl, programInfo, buffers);
+  
+  // Set Uniforms
+  gl.uniform1f(programInfo.uniformLocations.uflipY, -1);
+  // Set Framebuffer
+  setFramebuffer(gl, fbo, width, height);
+
+  // do drawing to frame buffer 
+  gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+ 
+}
 
 
 function RunQuadAvgVelocity(gl, programInfo, buffers, ctex, vtex, quadfbo, shiftX, shiftY) 
@@ -1736,7 +2153,7 @@ function RunQuadCompress(gl, programInfo, buffers, ctex0, quadfbo, shiftX, shift
   gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
 }
 
-function RunUpdateCellState(gl, programInfo, buffers, ctex0, etex1, cfbo, eShift_state, shiftX, shiftY) 
+function RunUpdateCellState(gl, programInfo, buffers, ctex0, etex1, cfbo, eShiftState, shiftX, shiftY) 
 {
   setupContext(gl, programInfo, buffers);
   
@@ -1748,8 +2165,9 @@ function RunUpdateCellState(gl, programInfo, buffers, ctex0, etex1, cfbo, eShift
   gl.uniform2fv(programInfo.uniformLocations.uOffSetLookUp, offSetLookUp );
   gl.uniform3iv(programInfo.uniformLocations.uActionShift, actionShift );
   gl.uniform2f(programInfo.uniformLocations.uCellSpaceSize, nCellsX, nCellsY);
-  gl.uniform2f(programInfo.uniformLocations.uExShiftOffSet, shiftX/nCellsX, shiftY/nCellsY);
-  gl.uniform1i(programInfo.uniformLocations.uShiftState, eShift_state);
+  gl.uniform2fv(programInfo.uniformLocations.uOffSetReverseLookUp, offSetReverseLookUp);
+  gl.uniform1i(programInfo.uniformLocations.uShiftState, eShiftState);
+
   gl.uniform1i(programInfo.uniformLocations.uSamplerCell0, 0);
   gl.uniform1i(programInfo.uniformLocations.uSamplerExchange1, 1);
   
@@ -1773,8 +2191,124 @@ function RunUpdateCellState(gl, programInfo, buffers, ctex0, etex1, cfbo, eShift
 
 
 
+function RunStreamLBM(gl, programInfo, buffers, pictex, quadtex, mtex, mtexdelta, mfbodelta, eShiftState, shiftX, shiftY) 
+{
+  setupContext(gl, programInfo, buffers);
+  
+  // Set Uniforms
+  gl.uniform1f(programInfo.uniformLocations.uflipY, -1);
 
-function RunUpdateParticleInCell(gl, programInfo, buffers, pictex, etex, picfbo, eShift_state, shiftX, shiftY) 
+  gl.uniform1i(programInfo.uniformLocations.uShiftState, eShiftState);
+  gl.uniform2f(programInfo.uniformLocations.uShiftOffSet, shiftX/nCellsX, shiftY/nCellsY);
+  gl.uniform2f(programInfo.uniformLocations.uCellSpaceSize, nCellsX, nCellsY);
+  gl.uniform1iv(programInfo.uniformLocations.uComponentLookUp, componentLookUp );
+  gl.uniform3iv(programInfo.uniformLocations.uLookUp1, streamLookUp1 );
+  gl.uniform4iv(programInfo.uniformLocations.uLookUp2, streamLookUp2 );
+
+  
+  
+  // Set sampler uniforms
+  gl.uniform1i(programInfo.uniformLocations.uSamplerCellPosition, 0);
+  gl.uniform1i(programInfo.uniformLocations.uSamplerQuadData, 1);
+  gl.uniform1i(programInfo.uniformLocations.uSamplerMomenta, 2);
+  gl.uniform1i(programInfo.uniformLocations.uSamplerMomentaDelta, 3);
+  
+  
+  // Bind textures in same order as above
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, pictex); 
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, quadtex); 
+  gl.activeTexture(gl.TEXTURE2);
+  gl.bindTexture(gl.TEXTURE_2D, mtex);
+  gl.activeTexture(gl.TEXTURE3);
+  gl.bindTexture(gl.TEXTURE_2D, mtexdelta); 
+
+   
+  // Set Framebuffer
+  setFramebuffer(gl, mfbodelta, nParticles, 1.0);
+
+  // do drawing to frame buffer 
+  gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+ 
+}
+
+function RunStreamLBMPart2(gl, programInfo, buffers, mtex, mtexdelta, mfbo) 
+{
+  setupContext(gl, programInfo, buffers);
+  
+  // Set Uniforms
+  gl.uniform1f(programInfo.uniformLocations.uflipY, -1);
+  
+  // Set sampler uniforms
+  gl.uniform1i(programInfo.uniformLocations.uSamplerMomenta, 0);
+  gl.uniform1i(programInfo.uniformLocations.uSamplerMomentaDelta, 1);
+  
+  
+  // Bind textures in same order as above
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, mtex);
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, mtexdelta); 
+
+   
+  // Set Framebuffer
+  setFramebuffer(gl, mfbo, nParticles, 1.0);
+
+  // do drawing to frame buffer 
+  gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+ 
+}
+
+function RunConvertVelocityToMomenta(gl, programInfo, buffers, vtex, mfbo) 
+{
+  setupContext(gl, programInfo, buffers);
+  
+  // Set Uniforms
+  gl.uniform1f(programInfo.uniformLocations.uflipY, -1);
+  gl.uniform1f(programInfo.uniformLocations.uInvNumOfParticles, 1/nParticles);
+
+  // Set sampler uniforms
+  gl.uniform1i(programInfo.uniformLocations.uSamplerVelocity, 0);
+
+  // Bind textures in same order as above
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, vtex); 
+
+  // Set Framebuffer
+  setFramebuffer(gl, mfbo, nParticles, 1.0);
+
+  // do drawing to frame buffer 
+  gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+ 
+}
+
+function RunConvertMomentaToVelocity(gl, programInfo, buffers, mtex, vfbo) 
+{
+  setupContext(gl, programInfo, buffers);
+  
+  // Set Uniforms
+  gl.uniform1f(programInfo.uniformLocations.uflipY, -1);
+  gl.uniform1f(programInfo.uniformLocations.uInvNumOfParticles, 1/nParticles);
+
+  // Set sampler uniforms
+  gl.uniform1i(programInfo.uniformLocations.uSamplerMomenta, 0);
+
+  // Bind textures in same order as above
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, mtex); 
+
+  // Set Framebuffer
+  setFramebuffer(gl, vfbo, nParticles, 1.0);
+
+  // do drawing to frame buffer 
+  gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+ 
+}
+
+
+
+function RunUpdateParticleInCell(gl, programInfo, buffers, pictex, etex, picfbo, eShiftstate, shiftX, shiftY) 
 {
   setupContext(gl, programInfo, buffers);
   
@@ -1787,7 +2321,7 @@ function RunUpdateParticleInCell(gl, programInfo, buffers, pictex, etex, picfbo,
 
   gl.uniform2f(programInfo.uniformLocations.uCellSpaceSize, nCellsX, nCellsY);
   gl.uniform2f(programInfo.uniformLocations.uExShiftOffSet, shiftX/nCellsX, shiftY/nCellsY);
-  gl.uniform1i(programInfo.uniformLocations.uShiftState, eShift_state);
+  gl.uniform1i(programInfo.uniformLocations.uShiftState, eShiftstate);
 
   gl.uniform1i(programInfo.uniformLocations.uSamplerParticleInCell, 0);
   gl.uniform1i(programInfo.uniformLocations.uSamplerExchange, 1);
@@ -2356,7 +2890,7 @@ function SwitchIndex(ArrayToCount)
     ii = 2;
     switchIndex += ArrayToCount[ii].occ*( ArrayToCount[ii].occ + 3*( ArrayToCount[ii].x + 1) + ( ArrayToCount[ii].y + 1))*10;
     ii = 3;
-    switchIndex +=  ArrayToCount[ii].occ*( ArrayToCount[ii].occ + 3*( ArrayToCount[ii].x + 1) + ( ArrayToCount[ii].y + 1))*1;
+    switchIndex += ArrayToCount[ii].occ*( ArrayToCount[ii].occ + 3*( ArrayToCount[ii].x + 1) + ( ArrayToCount[ii].y + 1))*1;
     return switchIndex;
 
 }

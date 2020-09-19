@@ -1,8 +1,9 @@
 
-const nCellsX = 600;
-const nCellsY = 300;
-var nParticles = 15000;
-var editClick = true;
+const nCellsX = 100;
+const nCellsY = 50;
+var nParticles = 300;
+var editClick = false;
+var updateVelocityFlag = false;
 var input = 5;
 var step = 0.1;
 var dotsides = 6;
@@ -15,7 +16,7 @@ var switchTable = new Int32Array(40000);
 var switchCount = [];
 var mousePx = 0.5;
 var mousePy = 0.5;
-var fieldOfView = 45;
+
 const shift_sequence = [0,1,2,3,1,2];
 const shift_total = 6;
 const actionShift = [ 0,0,0,   1,0,0,    0,1,0,   1,1,0, 
@@ -129,6 +130,22 @@ function main()
     clickPx = mousePx;
     clickPy = mousePy;
     document.getElementById("s0").innerText = "(x,y) = "+mousePx+", "+mousePy;
+
+  });
+
+  canvas.addEventListener("mouseover", function(e) { 
+    //var x = document.getElementById('canvasRow');
+    //alert(x);
+    updateVelocityFlag = true;
+
+
+  });
+
+  canvas.addEventListener("mouseout", function(e) { 
+    //var x = document.getElementById('canvasRow');
+    //alert(x);
+    updateVelocityFlag = false;
+
 
   });
 
@@ -1467,6 +1484,7 @@ console.log(vel_str); */
   var mNextDelta = 1;
   var eShift_state = 3;
   var shift_index  = 0;
+  var dt;
   
    var then = 0;
   var picData = new Float32Array(nParticles*4);
@@ -1476,7 +1494,15 @@ console.log(vel_str); */
      now *= 0.001;  // convert to seconds
      const deltaTime = now - then;
      then = now;
-     let dt = 0.05;
+     if (editClick && updateVelocityFlag)
+     {
+      dt = 0.05;
+     }
+     else
+     {
+        dt = 0.0005;
+     }
+     
 
      RunUpdatePosition(gl, programInfo_UpdatePosition, buffers, ptex[pLast], vtex[vLast], ctex[cLast], pfbo[pNext], dt);
      pLast = pNext;
@@ -1492,12 +1518,19 @@ console.log(vel_str); */
     //let sData = new Int32Array(nParticles*4);
     //gl.readPixels(0, 0, nParticles, 1.0, gl.RGBA_INTEGER, gl.INT, sData);
 
-     RunUpdateVelocity(gl, programInfo_UpdateVelocity, buffers, pictex[picLast], vtex[vLast], vfbo[vNext],dt);
-     //RunUpdateVelocity(gl, programInfo_UpdateVelocity, buffers, ptex[pLast], vtex[vLast], vfbo[vNext],0.01);
-     vLast = vNext;
-     vNext = (vLast+1) % 2;
-     //let vData = new Float32Array(nParticles*4);
-     //gl.readPixels(0, 0, nParticles, 1.0, gl.RGBA, gl.FLOAT, vData); 
+    if (updateVelocityFlag)
+    {
+
+      RunUpdateVelocity(gl, programInfo_UpdateVelocity, buffers, pictex[picLast], vtex[vLast], vfbo[vNext],dt);
+      //RunUpdateVelocity(gl, programInfo_UpdateVelocity, buffers, ptex[pLast], vtex[vLast], vfbo[vNext],0.01);
+      vLast = vNext;
+      vNext = (vLast+1) % 2;
+      //let vData = new Float32Array(nParticles*4);
+      //gl.readPixels(0, 0, nParticles, 1.0, gl.RGBA, gl.FLOAT, vData); 
+     
+
+    }
+    
 
     
      
@@ -1638,7 +1671,7 @@ console.log(vel_str); */
 
 
 
-function render(gl, programInfo, buffers, renderTex) {
+/*function render(gl, programInfo, buffers, renderTex) {
   //clean up frame
   setFramebuffer(gl, null, gl.canvas.width, gl.canvas.height);
   gl.clearColor(0.0, 0.0, 0.0, 1.0);  // Clear to black, fully opaque
@@ -1650,7 +1683,7 @@ function render(gl, programInfo, buffers, renderTex) {
   // Create a perspective matrix
   const fieldOfView = 45 * Math.PI / 180;   // in radians
   const aspect = 1;//gl.canvas.clientWidth / gl.canvas.clientHeight;
-  const zNear = 0.0;
+  const zNear = 1.0;
   const zFar = 100.0;
   const projectionMatrix = mat4.create();
   mat4.perspective(projectionMatrix,
@@ -1665,7 +1698,7 @@ function render(gl, programInfo, buffers, renderTex) {
 
   mat4.translate(modelViewMatrix,     // destination matrix
     modelViewMatrix,     // matrix to translate
-    [0.0, 0.0, -3]);  // amount to translate
+    [0.0, 0.0, 0.0]);  // amount to translate
   mat4.rotate(modelViewMatrix,  // destination matrix
     modelViewMatrix,  // matrix to rotate
     0,     // amount to rotate in radians
@@ -1738,7 +1771,98 @@ function render(gl, programInfo, buffers, renderTex) {
    setFramebuffer(gl, null, gl.canvas.width, gl.canvas.height);
    gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
   
+} */
+
+function render(gl, programInfo, buffers, renderTex) {
+  //clean up frame
+  setFramebuffer(gl, null, gl.canvas.width, gl.canvas.height);
+  gl.clearColor(0.0, 0.0, 0.0, 1.0);  // Clear to black, fully opaque
+  gl.clearDepth(1.0);                 // Clear everything
+  gl.enable(gl.DEPTH_TEST);           // Enable depth testing
+  gl.depthFunc(gl.LEQUAL);            // Near things obscure far things
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  // Create a perspective matrix
+  const fieldOfView = 45 * Math.PI / 180;   // in radians
+  const aspect = gl.canvas.clientWidth / gl.canvas.clientHeight;
+  const zNear = 1.0;
+  const zFar = 100.0;
+  const projectionMatrix = mat4.create();
+
+
+  // Set the drawing position to identity point
+  const modelViewMatrix = mat4.create();
+
+  // move the drawing position
+  mat4.translate(modelViewMatrix,     // destination matrix
+                 modelViewMatrix,     // matrix to translate
+                 [0.0, 0.0, 0.0]);  // amount to translate
+
+  // Tell WebGL how to pull out vertex data
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
+  gl.vertexAttribPointer(
+      programInfo.attribLocations.vertexPosition,
+      3, //number of components
+      gl.FLOAT, //data type
+      false, //normalize - don't
+      0, //stride
+      0); // offset
+  gl.enableVertexAttribArray(programInfo.attribLocations.vertexPosition);
+  
+
+
+  // Tell WebGL how to pull texcoords
+  
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffers.textureCoord);
+  gl.vertexAttribPointer(
+      programInfo.attribLocations.textureCoord,
+      2, //numComponents,
+      gl.FLOAT, //type,
+      false, //normalize,
+      0, //stride,
+      0); //offset);
+  gl.enableVertexAttribArray(programInfo.attribLocations.textureCoord);
+  
+
+  // Tell WebGL which indices to use to index the vertices
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buffers.indices);
+
+  // Tell WebGL to use our program when drawing
+  gl.useProgram(programInfo.program);
+
+  // Set the shader uniforms
+  gl.uniformMatrix4fv(
+      programInfo.uniformLocations.projectionMatrix,
+      false,
+      projectionMatrix);
+  gl.uniformMatrix4fv(
+      programInfo.uniformLocations.modelViewMatrix,
+      false,
+      modelViewMatrix);
+
+  
+  // Specify the texture to map onto the faces.
+  // Tell WebGL we want to affect texture unit 0
+ 
+
+  
+
+  // Tell the shader we bound the texture to texture unit 0
+  gl.uniform1i(programInfo.uniformLocations.uSampler, 0);
+
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, renderTex); 
+
+ gl.uniform1f(programInfo.uniformLocations.uflipY, 1);
+
+
+   // draw to canvas
+   setFramebuffer(gl, null, gl.canvas.width, gl.canvas.height);
+   gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+  
 }
+
+
 
 function PrepRenderDotsContext(gl, programInfo, buffers)
 {
